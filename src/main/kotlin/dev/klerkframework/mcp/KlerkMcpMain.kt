@@ -162,7 +162,7 @@ internal fun propertyTypeToJsonType(propertyType: PropertyType?): String {
         PropertyType.Instant -> "string"
         PropertyType.Duration -> "string"
         PropertyType.Geo -> "string"
-        PropertyType.Enum ->    throw IllegalArgumentException("PropertyType.Enum not yet implemented")
+        PropertyType.Enum -> "string"
         null -> throw IllegalArgumentException("PropertyType was null!?")
     }
 }
