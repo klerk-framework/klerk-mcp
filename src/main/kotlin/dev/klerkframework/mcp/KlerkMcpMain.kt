@@ -9,11 +9,17 @@ import dev.klerkframework.klerk.command.ProcessingOptions
 import dev.klerkframework.klerk.datatypes.DataContainer
 import dev.klerkframework.klerk.misc.PropertyType
 import dev.klerkframework.klerk.statemachine.StateMachine
-import io.modelcontextprotocol.kotlin.sdk.*
 import io.modelcontextprotocol.kotlin.sdk.server.Server
 import io.modelcontextprotocol.kotlin.sdk.server.ServerOptions
+import io.modelcontextprotocol.kotlin.sdk.types.CallToolRequest
+import io.modelcontextprotocol.kotlin.sdk.types.CallToolResult
+import io.modelcontextprotocol.kotlin.sdk.types.Implementation
+import io.modelcontextprotocol.kotlin.sdk.types.ReadResourceResult
+import io.modelcontextprotocol.kotlin.sdk.types.ServerCapabilities
+import io.modelcontextprotocol.kotlin.sdk.types.TextContent
+import io.modelcontextprotocol.kotlin.sdk.types.TextResourceContents
 
-import io.modelcontextprotocol.kotlin.sdk.Tool
+import io.modelcontextprotocol.kotlin.sdk.types.ToolSchema
 import kotlinx.serialization.json.*
 import org.slf4j.LoggerFactory
 
@@ -24,7 +30,7 @@ import org.slf4j.LoggerFactory
  * @param C The type of KlerkContext that will be provided, typically a class named Ctx
  * @param command The command being executed, or null if no specific command is associated with this context request
  */
-typealias ContextProvider<C> = suspend (command: Command<*, *>?) -> C
+public typealias ContextProvider<C> = suspend (command: Command<*, *>?) -> C
 
 //fun configureMcpServer(): Routing.() -> Unit = {
 //    mcp {
@@ -39,7 +45,7 @@ private val logger = LoggerFactory.getLogger("dev.klerkframework.mcp.KlerkMcpMai
  */
 private const val MODEL_ID_JSON_PARAMETER = "modelID"
 
-fun <C : KlerkContext, V> createMcpServer(
+public fun <C : KlerkContext, V> createMcpServer(
     klerk: Klerk<C, V>,
     contextProvider: ContextProvider<C>,
     mcpServerName: String,
@@ -63,7 +69,7 @@ fun <C : KlerkContext, V> createMcpServer(
     for (model in klerk.config.managedModels) {
         val stateMachine = model.stateMachine
 
-        stateMachine.getExternalEvents().forEach { eventReference ->
+        stateMachine.getAllEvents().forEach { eventReference ->
             logger.debug("Adding tool for model {} and event: {}",model.kClass.simpleName, eventReference.eventName)
 
             val event = klerk.config.getEvent(eventReference)
@@ -93,7 +99,7 @@ fun <C : KlerkContext, V> createMcpServer(
             }
 
             logger.debug("Tool input properties for ${eventReference.eventName}: {}", properties)
-            val inputSchema = Tool.Input(JsonObject(properties), required)
+            val inputSchema = ToolSchema(properties = JsonObject(properties), required = required)
             server.addTool(
                 name = toToolName(eventReference.eventName, model.kClass.simpleName!!),
                 description = "Executes the ${eventReference.eventName} command on the data ${model.kClass.simpleName}",
@@ -144,7 +150,7 @@ fun <C : KlerkContext, V> createMcpServer(
     return server
 }
 
-fun propertyTypeToJsonType(propertyType: PropertyType?): String {
+internal fun propertyTypeToJsonType(propertyType: PropertyType?): String {
     return when (propertyType) {
         PropertyType.String ->  "string"
         PropertyType.Int ->     "number"
@@ -152,18 +158,22 @@ fun propertyTypeToJsonType(propertyType: PropertyType?): String {
         PropertyType.Float ->   "number"
         PropertyType.Boolean -> "boolean"
         PropertyType.Ref ->     "string"
+        PropertyType.KeyValueRef -> "string"
+        PropertyType.Instant -> "string"
+        PropertyType.Duration -> "string"
+        PropertyType.Geo -> "string"
         PropertyType.Enum ->    throw IllegalArgumentException("PropertyType.Enum not yet implemented")
         null -> throw IllegalArgumentException("PropertyType was null!?")
     }
 }
 
-fun toSnakeCase(camelCase: String): String {
+internal fun toSnakeCase(camelCase: String): String {
     return camelCase.replace(Regex("([a-z])([A-Z])"), "$1_$2")
         .replace(Regex("([A-Z])([A-Z][a-z])"), "$1_$2")
         .lowercase()
 }
 
-fun toToolName(eventName: String, modelName: String): String {
+internal fun toToolName(eventName: String, modelName: String): String {
     return "${toSnakeCase(modelName)}_${toSnakeCase(eventName)}"
 }
 
@@ -194,7 +204,7 @@ private fun createCommandParams(event: Event<Any, Any?>, request: CallToolReques
         for (param in constructorParams) {
             val paramName = param.name ?: continue
             val paramType = param.type.classifier as? kotlin.reflect.KClass<*> ?: continue
-            val requestParamValue = request.arguments[paramName]
+            val requestParamValue = request.arguments?.get(paramName)
                 ?: throw IllegalArgumentException("Missing parameter for tool call ${request.name}: $paramName")
 
             if (requestParamValue !is JsonPrimitive) {
@@ -203,7 +213,7 @@ private fun createCommandParams(event: Event<Any, Any?>, request: CallToolReques
 
             // Handle ModelID parameters
             if (paramType == ModelID::class) {
-                paramValues[param] = ModelID.from<Any>(requestParamValue.content) as Any
+                paramValues[param] = ModelID<Any>(requestParamValue.content.toInt()) as Any
                 continue
             }
 
@@ -254,11 +264,11 @@ private suspend fun <T : Any, ModelStates : Enum<*>, C : KlerkContext, V> handle
 
     val paramsInstance = createCommandParams(event, request)
 
-    val modelIdForCommand: ModelID<T>? = request.arguments[MODEL_ID_JSON_PARAMETER]?.let { modelIdJsonParam ->
+    val modelIdForCommand: ModelID<T>? = request.arguments?.get(MODEL_ID_JSON_PARAMETER)?.let { modelIdJsonParam ->
         if (modelIdJsonParam !is JsonPrimitive) {
             throw IllegalArgumentException("Unknown JSON class ${modelIdJsonParam.javaClass.simpleName}")
         }
-        ModelID.from(modelIdJsonParam.content)
+        ModelID(modelIdJsonParam.content.toInt())
     }
 
     // Create and execute the command
@@ -275,9 +285,9 @@ private suspend fun <T : Any, ModelStates : Enum<*>, C : KlerkContext, V> handle
     // Handle the command
     when(val result = klerk.handle(command, context, ProcessingOptions(CommandToken.simple()))) {
         is Failure -> {
-            logger.error("Command execution failed: {}", result.problem)
+            logger.error("Command execution failed: {}", result.problems.joinToString(", "))
             return CallToolResult(
-                content = listOf(TextContent("Error: ${result.problem}"))
+                content = listOf(TextContent("Error: ${result.problems.joinToString(", ")}"))
             )
         }
         is Success -> {
@@ -311,7 +321,7 @@ private suspend fun <T : Any, ModelStates : Enum<*>, C : KlerkContext, V> handle
 /**
  * Converts a Klerk model to a JsonObject to return to the MCP client
  */
-fun modelToJson(model: Model<*>): JsonObject {
+internal fun modelToJson(model: Model<*>): JsonObject {
     val propsMap: MutableMap<String, JsonElement> = mutableMapOf()
 
     // Use reflection to get all properties from model.props
@@ -372,3 +382,5 @@ private fun propertyToJson(
         }
     }
 }
+
+// TODO: provide a "hello" response for /mcp if accept-header is text/html
