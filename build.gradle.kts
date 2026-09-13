@@ -1,14 +1,14 @@
 import org.jetbrains.kotlin.gradle.dsl.ExplicitApiMode
 
 plugins {
-    kotlin("jvm") version "2.3.10"
+    kotlin("jvm") version "2.4.10"
     kotlin("plugin.serialization") version "2.1.10"
     `maven-publish`
 }
 
 val klerkBomVersion = "1.0.0-beta.5"
 val kotlinLoggingVersion = "2.1.21"
-val klerkVersion = "a3640ba3a8"
+val klerkVersion = "1.0.0-beta.7-SNAPSHOT"
 
 group = "dev.klerkframework"
 version = "0.1.0-SNAPSHOT"

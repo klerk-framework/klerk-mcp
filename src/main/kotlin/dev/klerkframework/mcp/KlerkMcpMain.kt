@@ -3,10 +3,12 @@ package dev.klerkframework.mcp
 import dev.klerkframework.klerk.*
 import dev.klerkframework.klerk.CommandResult.Failure
 import dev.klerkframework.klerk.CommandResult.Success
+import dev.klerkframework.klerk.collection.asSequence
 import dev.klerkframework.klerk.command.Command
 import dev.klerkframework.klerk.command.CommandToken
 import dev.klerkframework.klerk.command.ProcessingOptions
 import dev.klerkframework.klerk.datatypes.DataContainer
+import dev.klerkframework.klerk.misc.ObjectSchema
 import dev.klerkframework.klerk.misc.PropertyType
 import dev.klerkframework.klerk.statemachine.StateMachine
 import io.modelcontextprotocol.kotlin.sdk.server.Server
@@ -66,18 +68,18 @@ public fun <C : KlerkContext, V> createMcpServer(
         )
     )
 
-    for (model in klerk.config.managedModels) {
+    for (model in klerk.specification.managedModels) {
         val stateMachine = model.stateMachine
 
         stateMachine.getAllEvents().forEach { eventReference ->
             logger.debug("Adding tool for model {} and event: {}",model.kClass.simpleName, eventReference.eventName)
 
-            val event = klerk.config.getEvent(eventReference)
+            val event = klerk.specification.getEvent(eventReference)
 
             val required: MutableList<String> = mutableListOf()
             val properties: MutableMap<String, JsonElement> = mutableMapOf()
 
-            if (event is InstanceEvent) {
+            if (event is InstanceEvent<*, *>) {
                 required.add(MODEL_ID_JSON_PARAMETER)
                 properties[MODEL_ID_JSON_PARAMETER] = JsonObject(mapOf(
                         "type" to JsonPrimitive("string"),
@@ -86,9 +88,9 @@ public fun <C : KlerkContext, V> createMcpServer(
                 )
             }
 
-            klerk.config.getParameters(eventReference)?.let { parameters ->
-                required.addAll(parameters.requiredParameters.map { it.name })
-                parameters.all.forEach { eventParameter ->
+            klerk.specification.getParameters(eventReference)?.let { parameters ->
+                required.addAll(parameters.fields.filter { it.isRequired }.map { it.name })
+                parameters.fields.forEach { eventParameter ->
                     properties[eventParameter.name] = JsonObject(
                         mapOf(
                             "type" to JsonPrimitive(propertyTypeToJsonType(eventParameter.type)),
@@ -105,7 +107,7 @@ public fun <C : KlerkContext, V> createMcpServer(
                 description = "Executes the ${eventReference.eventName} command on the data ${model.kClass.simpleName}",
                 inputSchema = inputSchema,
             ) { request ->
-                handleToolRequest(stateMachine, klerk, klerk.config.getEvent(eventReference), contextProvider, request)
+                handleToolRequest(stateMachine, klerk, klerk.specification.getEvent(eventReference), contextProvider, request)
             }
        }
 
@@ -117,7 +119,7 @@ public fun <C : KlerkContext, V> createMcpServer(
             mimeType = "application/json",
         ) { request ->
             val models = klerk.read(contextProvider(null)) {
-                listIfAuthorized(model.collections.all)
+                model.collections.all.asSequence().toList()
             }
 
             val jsonArray = buildJsonArray {
@@ -137,7 +139,7 @@ public fun <C : KlerkContext, V> createMcpServer(
             description = "Lists all ${model.kClass.simpleName!!} models",
         ) { request ->
             val models = klerk.read(contextProvider(null)) {
-                listIfAuthorized(model.collections.all)
+                model.collections.all.asSequence().toList()
             }
 
             val jsonArray = buildJsonArray {
@@ -158,8 +160,9 @@ internal fun propertyTypeToJsonType(propertyType: PropertyType?): String {
         PropertyType.Float ->   "number"
         PropertyType.Boolean -> "boolean"
         PropertyType.Ref ->     "string"
-        PropertyType.KeyValueRef -> "string"
+        PropertyType.AttachedDataRef -> "string"
         PropertyType.Instant -> "string"
+        PropertyType.Date -> "string"
         PropertyType.Duration -> "string"
         PropertyType.Geo -> "string"
         PropertyType.Enum -> "string"
@@ -190,63 +193,30 @@ private fun createCommandParams(event: Event<Any, Any?>, request: CallToolReques
 
     logger.debug("Parameters class: {}", parametersClass)
     try {
-        // Get the constructor of the parameters class
-        val constructor = parametersClass.constructors.firstOrNull()
-            ?: throw IllegalStateException("No constructor found for $parametersClass")
-
-        // Get constructor parameters
-        val constructorParams = constructor.parameters
-
-        // Create a map to hold the parameter values we'll pass to the constructor
-        val paramValues = mutableMapOf<kotlin.reflect.KParameter, Any>()
-
-        // Process each constructor parameter
-        for (param in constructorParams) {
-            val paramName = param.name ?: continue
-            val paramType = param.type.classifier as? kotlin.reflect.KClass<*> ?: continue
-            val requestParamValue = request.arguments?.get(paramName)
-                ?: throw IllegalArgumentException("Missing parameter for tool call ${request.name}: $paramName")
+        val schema = ObjectSchema.of(parametersClass as kotlin.reflect.KClass<*>)
+        val values = mutableMapOf<String, Any?>()
+        for (field in schema.fields) {
+            val requestParamValue = request.arguments?.get(field.name)
+                ?: throw IllegalArgumentException("Missing parameter for tool call ${request.name}: ${field.name}")
 
             if (requestParamValue !is JsonPrimitive) {
                 throw IllegalArgumentException("Unknown JSON class ${requestParamValue.javaClass.simpleName}")
             }
-
-            // Handle ModelID parameters
-            if (paramType == ModelID::class) {
-                paramValues[param] = ModelID<Any>(requestParamValue.content.toInt()) as Any
+            if (requestParamValue is JsonNull) {
+                values[field.name] = null
                 continue
             }
-
-            // Find the constructor of the parameter type (which should be a DataContainer subclass)
-            val containerConstructor = paramType.constructors.firstOrNull()
-                ?: throw IllegalStateException("No constructor found for parameter type $paramType")
-
-            // Get the first parameter of the constructor to determine what type it expects
-            val constructorFirstParam = containerConstructor.parameters.firstOrNull()
-                ?: throw IllegalStateException("Constructor for $paramType has no parameters")
-
-            // Create an instance of the DataContainer subclass with the value from the request
-            val containerInstance = when (val parameterType = constructorFirstParam.type.classifier) {
-                String::class -> {
-                    containerConstructor.call(requestParamValue.content)
-                }
-                Int::class -> {
-                    val intValue = requestParamValue.content.toInt()
-                    containerConstructor.call(intValue)
-                }
-                Boolean::class -> {
-                    val boolValue = requestParamValue.content.toBoolean()
-                    containerConstructor.call(boolValue)
-                }
-                else -> {
-                    throw IllegalArgumentException("Unsupported parameter type: $paramType with constructor parameter type: $parameterType")
-                }
+            val content = requestParamValue.content
+            values[field.name] = when (field.type) {
+                PropertyType.Ref -> ModelID<Any>(content.toInt())
+                PropertyType.String -> field.createContainer(content)
+                PropertyType.Int -> field.createContainer(content.toInt())
+                PropertyType.Boolean -> field.createContainer(content.toBoolean())
+                PropertyType.Enum -> field.createContainer(field.enumConstants.first { it.name == content })
+                else -> throw IllegalArgumentException("Unsupported parameter type ${field.type} of ${field.name}")
             }
-            paramValues[param] = containerInstance
         }
-
-        // Create an instance of the parameters class with the constructed parameter values
-        return constructor.callBy(paramValues)
+        return schema.create(values)
     } catch (e: Exception) {
         throw IllegalArgumentException("Error instantiating parameters class: ${parametersClass.simpleName}", e)
     }
@@ -283,7 +253,7 @@ private suspend fun <T : Any, ModelStates : Enum<*>, C : KlerkContext, V> handle
     val context = contextProvider(command) // todo: fix model
 
     // Handle the command
-    when(val result = klerk.handle(command, context, ProcessingOptions(CommandToken.simple()))) {
+    when(val result = klerk.handle(command, context)) {
         is Failure -> {
             logger.error("Command execution failed: {}", result.problems.joinToString(", "))
             return CallToolResult(
@@ -294,7 +264,7 @@ private suspend fun <T : Any, ModelStates : Enum<*>, C : KlerkContext, V> handle
             logger.info("Command executed successfully")
             val modelId = result.primaryModel
 
-            if (result.deletedModels.isNotEmpty() && result.deletedModels[0] == result.primaryModel) {
+            if (result.deletedModels.any { it == result.primaryModel }) {
                 // The model was probably deleted.
                 return CallToolResult(
                     content = listOf(TextContent("Successfully executed tool ${request.name}"))
@@ -322,27 +292,8 @@ private suspend fun <T : Any, ModelStates : Enum<*>, C : KlerkContext, V> handle
  * Converts a Klerk model to a JsonObject to return to the MCP client
  */
 internal fun modelToJson(model: Model<*>): JsonObject {
-    val propsMap: MutableMap<String, JsonElement> = mutableMapOf()
-
-    // Use reflection to get all properties from model.props
-    val propsObj = model.props
-    val propsClass = propsObj::class
-
-    // Get all properties from the model.props object
-    propsClass.members.forEach { member ->
-        if (member is kotlin.reflect.KProperty1<*, *>) {
-            try {
-                // Cast to KProperty1<Any, *> to be able to get the value
-                @Suppress("UNCHECKED_CAST")
-                val prop = member as kotlin.reflect.KProperty1<Any, *>
-                propsMap[member.name] = propertyToJson(prop.get(propsObj))
-
-            } catch (e: Exception) {
-                // Log the error but continue processing other properties
-                logger.error("Error processing property ${member.name}: ${e.message}")
-            }
-        }
-    }
+    val props = model.props
+    val propsMap = ObjectSchema.of(props::class).fields.associate { it.name to propertyToJson(it.get(props)) }
 
     return buildJsonObject {
         put("id", JsonPrimitive(model.id.toString()))
