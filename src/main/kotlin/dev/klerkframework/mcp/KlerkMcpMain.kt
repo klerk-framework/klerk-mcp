@@ -243,11 +243,7 @@ private suspend fun <T : Any, ModelStates : Enum<*>, C : KlerkContext, V> handle
 
     // Create and execute the command
     @Suppress("UNCHECKED_CAST")
-    val command = Command(
-        event = event as Event<T, Any?>,
-        model = modelIdForCommand,
-        params = paramsInstance
-    )
+    val command = Command.dynamic(event as Event<T, Any?>, modelIdForCommand, paramsInstance)
 
     // Create a context for the command
     val context = contextProvider(command) // todo: fix model
