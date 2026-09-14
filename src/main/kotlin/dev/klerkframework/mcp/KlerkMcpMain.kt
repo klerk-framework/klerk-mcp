@@ -3,7 +3,7 @@ package dev.klerkframework.mcp
 import dev.klerkframework.klerk.*
 import dev.klerkframework.klerk.CommandResult.Failure
 import dev.klerkframework.klerk.CommandResult.Success
-import dev.klerkframework.klerk.collection.asSequence
+import dev.klerkframework.klerk.view.asSequence
 import dev.klerkframework.klerk.command.Command
 import dev.klerkframework.klerk.command.CommandToken
 import dev.klerkframework.klerk.command.ProcessingOptions
@@ -88,7 +88,7 @@ public fun <C : KlerkContext, V> createMcpServer(
                 )
             }
 
-            klerk.specification.getParameters(eventReference)?.let { parameters ->
+            klerk.specification.parametersSchema(eventReference)?.let { parameters ->
                 required.addAll(parameters.fields.filter { it.isRequired }.map { it.name })
                 parameters.fields.forEach { eventParameter ->
                     properties[eventParameter.name] = JsonObject(
@@ -119,7 +119,7 @@ public fun <C : KlerkContext, V> createMcpServer(
             mimeType = "application/json",
         ) { request ->
             val models = klerk.read(contextProvider(null)) {
-                model.collections.all.asSequence().toList()
+                model.views.all.asSequence().toList()
             }
 
             val jsonArray = buildJsonArray {
@@ -139,7 +139,7 @@ public fun <C : KlerkContext, V> createMcpServer(
             description = "Lists all ${model.kClass.simpleName!!} models",
         ) { request ->
             val models = klerk.read(contextProvider(null)) {
-                model.collections.all.asSequence().toList()
+                model.views.all.asSequence().toList()
             }
 
             val jsonArray = buildJsonArray {
