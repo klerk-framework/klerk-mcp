@@ -155,9 +155,9 @@ public fun <C : KlerkContext, V> createMcpServer(
 internal fun propertyTypeToJsonType(propertyType: PropertyType?): String {
     return when (propertyType) {
         PropertyType.String ->  "string"
-        PropertyType.Int ->     "number"
-        PropertyType.Long ->    "number"
-        PropertyType.Float ->   "number"
+        PropertyType.Int, PropertyType.Long, PropertyType.Short, PropertyType.Byte,
+        PropertyType.UInt, PropertyType.ULong, PropertyType.UShort, PropertyType.UByte,
+        PropertyType.Float, PropertyType.Double -> "number"
         PropertyType.Boolean -> "boolean"
         PropertyType.Ref ->     "string"
         PropertyType.AttachedDataRef -> "string"
@@ -211,6 +211,15 @@ private fun createCommandParams(event: Event<Any, Any?>, request: CallToolReques
                 PropertyType.Ref -> ModelID<Any>(content.toInt())
                 PropertyType.String -> field.createContainer(content)
                 PropertyType.Int -> field.createContainer(content.toInt())
+                PropertyType.Long -> field.createContainer(content.toLong())
+                PropertyType.Short -> field.createContainer(content.toShort())
+                PropertyType.Byte -> field.createContainer(content.toByte())
+                PropertyType.UInt -> field.createContainer(content.toUInt())
+                PropertyType.ULong -> field.createContainer(content.toULong())
+                PropertyType.UShort -> field.createContainer(content.toUShort())
+                PropertyType.UByte -> field.createContainer(content.toUByte())
+                PropertyType.Float -> field.createContainer(content.toFloat())
+                PropertyType.Double -> field.createContainer(content.toDouble())
                 PropertyType.Boolean -> field.createContainer(content.toBoolean())
                 PropertyType.Enum -> field.createContainer(field.enumConstants.first { it.name == content })
                 else -> throw IllegalArgumentException("Unsupported parameter type ${field.type} of ${field.name}")
