@@ -71,10 +71,10 @@ public fun <C : KlerkContext, V> createMcpServer(
     for (model in klerk.specification.managedModels) {
         val stateMachine = model.stateMachine
 
-        stateMachine.getAllEvents().forEach { eventReference ->
+        stateMachine.eventReferences.forEach { eventReference ->
             logger.debug("Adding tool for model {} and event: {}",model.kClass.simpleName, eventReference.eventName)
 
-            val event = klerk.specification.getEvent(eventReference)
+            val event = klerk.specification.event(eventReference)
 
             val required: MutableList<String> = mutableListOf()
             val properties: MutableMap<String, JsonElement> = mutableMapOf()
@@ -107,7 +107,7 @@ public fun <C : KlerkContext, V> createMcpServer(
                 description = "Executes the ${eventReference.eventName} command on the data ${model.kClass.simpleName}",
                 inputSchema = inputSchema,
             ) { request ->
-                handleToolRequest(stateMachine, klerk, klerk.specification.getEvent(eventReference), contextProvider, request)
+                handleToolRequest(stateMachine, klerk, klerk.specification.event(eventReference), contextProvider, request)
             }
        }
 
