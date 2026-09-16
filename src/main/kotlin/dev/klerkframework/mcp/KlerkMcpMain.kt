@@ -26,11 +26,8 @@ import kotlinx.serialization.json.*
 import org.slf4j.LoggerFactory
 
 /**
- * A function that provides a context for executing commands.
- * This is typically used to create a context based on the current request or user session.
- *
- * @param C The type of KlerkContext that will be provided, typically a class named Ctx
- * @param command The command being executed, or null if no specific command is associated with this context request
+ * Provides the context for executing a command, typically based on the current request or user session. The command
+ * is null if no specific command is associated with the request.
  */
 public typealias ContextProvider<C> = suspend (command: Command<*, *>?) -> C
 
@@ -47,6 +44,10 @@ private val logger = LoggerFactory.getLogger("dev.klerkframework.mcp.KlerkMcpMai
  */
 private const val MODEL_ID_JSON_PARAMETER = "modelID"
 
+/**
+ * Creates an MCP server named [mcpServerName] with a tool for every event of every managed model. Commands run in the
+ * context [contextProvider] provides.
+ */
 public fun <C : KlerkContext, V> createMcpServer(
     klerk: Klerk<C, V>,
     contextProvider: ContextProvider<C>,
@@ -58,20 +59,20 @@ public fun <C : KlerkContext, V> createMcpServer(
     val server = Server(
         serverInfo = Implementation(
             name = mcpServerName,
-            version = mcpServerVersion
+            version = mcpServerVersion,
         ),
         options = ServerOptions(
             capabilities = ServerCapabilities(
                 resources = ServerCapabilities.Resources(subscribe = null, listChanged = null),
                 tools = ServerCapabilities.Tools(listChanged = null),
-            )
-        )
+            ),
+        ),
     )
 
     for (model in klerk.specification.managedModels) {
         val stateMachine = model.stateMachine
 
-        stateMachine.eventReferences.forEach { eventReference ->
+        for (eventReference in stateMachine.eventReferences) {
             logger.debug("Adding tool for model {} and event: {}",model.kClass.simpleName, eventReference.eventName)
 
             val event = klerk.specification.event(eventReference)
@@ -83,19 +84,22 @@ public fun <C : KlerkContext, V> createMcpServer(
                 required.add(MODEL_ID_JSON_PARAMETER)
                 properties[MODEL_ID_JSON_PARAMETER] = JsonObject(mapOf(
                         "type" to JsonPrimitive("string"),
-                        "description" to JsonPrimitive("Model ID (as base-36 encoded string) of the instance to execute the command on"),
-                    )
+                        "description" to
+                            JsonPrimitive(
+                                "Model ID (as base-36 encoded string) of the instance to execute the command on",
+                            ),
+                    ),
                 )
             }
 
             klerk.specification.parametersSchema(eventReference)?.let { parameters ->
                 required.addAll(parameters.fields.filter { it.isRequired }.map { it.name })
-                parameters.fields.forEach { eventParameter ->
+                for (eventParameter in parameters.fields) {
                     properties[eventParameter.name] = JsonObject(
                         mapOf(
                             "type" to JsonPrimitive(propertyTypeToJsonType(eventParameter.type)),
                             "description" to JsonPrimitive("Value for the ${eventParameter.valueClass.simpleName}"),
-                        )
+                        ),
                     )
                 }
             }
@@ -107,7 +111,8 @@ public fun <C : KlerkContext, V> createMcpServer(
                 description = "Executes the ${eventReference.eventName} command on the data ${model.kClass.simpleName}",
                 inputSchema = inputSchema,
             ) { request ->
-                handleToolRequest(stateMachine, klerk, klerk.specification.event(eventReference), contextProvider, request)
+                val event = klerk.specification.event(eventReference)
+                handleToolRequest(stateMachine, klerk, event, contextProvider, request)
             }
        }
 
@@ -128,8 +133,8 @@ public fun <C : KlerkContext, V> createMcpServer(
 
             ReadResourceResult(
                 contents = listOf(
-                    TextResourceContents(jsonArray.toString(), request.uri, "application/json")
-                )
+                    TextResourceContents(jsonArray.toString(), request.uri, "application/json"),
+                ),
             )
         }
 
@@ -181,8 +186,8 @@ internal fun toToolName(eventName: String, modelName: String): String {
 }
 
 /**
- * Build a Command params instance using the request arguments from the MCP client.
- * @return The created Command params instance, or null if the event has no parameters.
+ * Builds the parameters of a command for [event] from the arguments of the MCP client's [request], or null if the
+ * event has no parameters.
  */
 private fun createCommandParams(event: Event<Any, Any?>, request: CallToolRequest): Any? {
     val parametersClass = when(event) {
@@ -262,7 +267,7 @@ private suspend fun <T : Any, ModelStates : Enum<*>, C : KlerkContext, V> handle
         is Failure -> {
             logger.error("Command execution failed: {}", result.problems.joinToString(", "))
             return CallToolResult(
-                content = listOf(TextContent("Error: ${result.problems.joinToString(", ")}"))
+                content = listOf(TextContent("Error: ${result.problems.joinToString(", ")}")),
             )
         }
         is Success -> {
@@ -272,7 +277,7 @@ private suspend fun <T : Any, ModelStates : Enum<*>, C : KlerkContext, V> handle
             if (result.deletedModels.any { it == result.primaryModel }) {
                 // The model was probably deleted.
                 return CallToolResult(
-                    content = listOf(TextContent("Successfully executed tool ${request.name}"))
+                    content = listOf(TextContent("Successfully executed tool ${request.name}")),
                 )
             }
 
@@ -282,11 +287,11 @@ private suspend fun <T : Any, ModelStates : Enum<*>, C : KlerkContext, V> handle
                     content = listOf(
                         TextContent("Successfully executed tool ${request.name}"),
                         TextContent(modelToJson(model).toString()),
-                    )
+                    ),
                 )
             } else {
                 return CallToolResult(
-                    content = listOf(TextContent("Command executed successfully"))
+                    content = listOf(TextContent("Command executed successfully")),
                 )
             }
         }
@@ -325,8 +330,8 @@ private fun propertyToJson(
         }
         is List<*>, is Set<*> -> {
             buildJsonArray {
-                (value as Iterable<*>).forEach {
-                    add(propertyToJson(it))
+                for (element in (value as Iterable<*>)) {
+                    add(propertyToJson(element))
                 }
             }
         }
