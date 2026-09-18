@@ -4,6 +4,7 @@ plugins {
     kotlin("jvm") version "2.4.10"
     kotlin("plugin.serialization") version "2.1.10"
     `maven-publish`
+    id("org.jlleitschuh.gradle.ktlint") version "14.2.0"
 }
 
 val klerkBomVersion = "1.0.0-beta.5"
@@ -18,7 +19,6 @@ dependencies {
 
     compileOnly("io.ktor:ktor-server-core-jvm")
     compileOnly("io.github.microutils:kotlin-logging-jvm:$kotlinLoggingVersion")
-
 
     // Kotlin standard libraries
 //    implementation("org.jetbrains.kotlin:kotlin-stdlib")
@@ -42,7 +42,6 @@ kotlin {
     explicitApi = ExplicitApiMode.Strict
 }
 
-
 publishing {
     publications {
         create<MavenPublication>("Maven") {
@@ -51,7 +50,6 @@ publishing {
         }
     }
 }
-
 
 java {
     withSourcesJar()

@@ -1,16 +1,21 @@
 package dev.klerkframework.mcp
 
-import dev.klerkframework.klerk.*
 import dev.klerkframework.klerk.CommandResult.Failure
 import dev.klerkframework.klerk.CommandResult.Success
-import dev.klerkframework.klerk.view.asSequence
+import dev.klerkframework.klerk.Event
+import dev.klerkframework.klerk.InstanceEvent
+import dev.klerkframework.klerk.InstanceEventWithParameters
+import dev.klerkframework.klerk.Klerk
+import dev.klerkframework.klerk.KlerkContext
+import dev.klerkframework.klerk.Model
+import dev.klerkframework.klerk.ModelID
+import dev.klerkframework.klerk.VoidEventWithParameters
 import dev.klerkframework.klerk.command.Command
-import dev.klerkframework.klerk.command.CommandToken
-import dev.klerkframework.klerk.command.ProcessingOptions
 import dev.klerkframework.klerk.datatypes.DataContainer
 import dev.klerkframework.klerk.misc.ObjectSchema
 import dev.klerkframework.klerk.misc.PropertyType
 import dev.klerkframework.klerk.statemachine.StateMachine
+import dev.klerkframework.klerk.view.asSequence
 import io.modelcontextprotocol.kotlin.sdk.server.Server
 import io.modelcontextprotocol.kotlin.sdk.server.ServerOptions
 import io.modelcontextprotocol.kotlin.sdk.types.CallToolRequest
@@ -20,9 +25,13 @@ import io.modelcontextprotocol.kotlin.sdk.types.ReadResourceResult
 import io.modelcontextprotocol.kotlin.sdk.types.ServerCapabilities
 import io.modelcontextprotocol.kotlin.sdk.types.TextContent
 import io.modelcontextprotocol.kotlin.sdk.types.TextResourceContents
-
 import io.modelcontextprotocol.kotlin.sdk.types.ToolSchema
-import kotlinx.serialization.json.*
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonNull
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.buildJsonArray
+import kotlinx.serialization.json.buildJsonObject
 import org.slf4j.LoggerFactory
 
 /**
@@ -31,11 +40,11 @@ import org.slf4j.LoggerFactory
  */
 public typealias ContextProvider<C> = suspend (command: Command<*, *>?) -> C
 
-//fun configureMcpServer(): Routing.() -> Unit = {
+// fun configureMcpServer(): Routing.() -> Unit = {
 //    mcp {
 //        getMcpServer()
 //    }
-//}
+// }
 
 private val logger = LoggerFactory.getLogger("dev.klerkframework.mcp.KlerkMcpMain")
 
@@ -73,7 +82,7 @@ public fun <C : KlerkContext, V> createMcpServer(
         val stateMachine = model.stateMachine
 
         for (eventReference in stateMachine.eventReferences) {
-            logger.debug("Adding tool for model {} and event: {}",model.kClass.simpleName, eventReference.eventName)
+            logger.debug("Adding tool for model {} and event: {}", model.kClass.simpleName, eventReference.eventName)
 
             val event = klerk.specification.event(eventReference)
 
@@ -82,7 +91,8 @@ public fun <C : KlerkContext, V> createMcpServer(
 
             if (event is InstanceEvent<*, *>) {
                 required.add(MODEL_ID_JSON_PARAMETER)
-                properties[MODEL_ID_JSON_PARAMETER] = JsonObject(mapOf(
+                properties[MODEL_ID_JSON_PARAMETER] = JsonObject(
+                    mapOf(
                         "type" to JsonPrimitive("string"),
                         "description" to
                             JsonPrimitive(
@@ -114,7 +124,7 @@ public fun <C : KlerkContext, V> createMcpServer(
                 val event = klerk.specification.event(eventReference)
                 handleToolRequest(stateMachine, klerk, event, contextProvider, request)
             }
-       }
+        }
 
         // Add MCP resources for listing a model. The support for MCP resources in MCP clients are current limited.
         server.addResource(
@@ -157,40 +167,36 @@ public fun <C : KlerkContext, V> createMcpServer(
     return server
 }
 
-internal fun propertyTypeToJsonType(propertyType: PropertyType?): String {
-    return when (propertyType) {
-        PropertyType.String ->  "string"
-        PropertyType.Int, PropertyType.Long, PropertyType.Short, PropertyType.Byte,
-        PropertyType.UInt, PropertyType.ULong, PropertyType.UShort, PropertyType.UByte,
-        PropertyType.Float, PropertyType.Double -> "number"
-        PropertyType.Boolean -> "boolean"
-        PropertyType.Ref ->     "string"
-        PropertyType.AttachedDataRef -> "string"
-        PropertyType.Instant -> "string"
-        PropertyType.Date -> "string"
-        PropertyType.Duration -> "string"
-        PropertyType.Geo -> "string"
-        PropertyType.Enum -> "string"
-        null -> throw IllegalArgumentException("PropertyType was null!?")
-    }
+internal fun propertyTypeToJsonType(propertyType: PropertyType?): String = when (propertyType) {
+    PropertyType.String -> "string"
+    PropertyType.Int, PropertyType.Long, PropertyType.Short, PropertyType.Byte,
+    PropertyType.UInt, PropertyType.ULong, PropertyType.UShort, PropertyType.UByte,
+    PropertyType.Float, PropertyType.Double,
+    -> "number"
+    PropertyType.Boolean -> "boolean"
+    PropertyType.Ref -> "string"
+    PropertyType.AttachedDataRef -> "string"
+    PropertyType.Instant -> "string"
+    PropertyType.Date -> "string"
+    PropertyType.Duration -> "string"
+    PropertyType.Geo -> "string"
+    PropertyType.Enum -> "string"
+    null -> throw IllegalArgumentException("PropertyType was null!?")
 }
 
-internal fun toSnakeCase(camelCase: String): String {
-    return camelCase.replace(Regex("([a-z])([A-Z])"), "$1_$2")
-        .replace(Regex("([A-Z])([A-Z][a-z])"), "$1_$2")
-        .lowercase()
-}
+internal fun toSnakeCase(camelCase: String): String = camelCase.replace(Regex("([a-z])([A-Z])"), "$1_$2")
+    .replace(Regex("([A-Z])([A-Z][a-z])"), "$1_$2")
+    .lowercase()
 
-internal fun toToolName(eventName: String, modelName: String): String {
-    return "${toSnakeCase(modelName)}_${toSnakeCase(eventName)}"
-}
+internal fun toToolName(eventName: String, modelName: String): String =
+    "${toSnakeCase(modelName)}_${toSnakeCase(eventName)}"
 
 /**
  * Builds the parameters of a command for [event] from the arguments of the MCP client's [request], or null if the
  * event has no parameters.
  */
 private fun createCommandParams(event: Event<Any, Any?>, request: CallToolRequest): Any? {
-    val parametersClass = when(event) {
+    val parametersClass = when (event) {
         is VoidEventWithParameters -> event.parametersClass
         is InstanceEventWithParameters -> event.parametersClass
         else -> return null
@@ -263,7 +269,7 @@ private suspend fun <T : Any, ModelStates : Enum<*>, C : KlerkContext, V> handle
     val context = contextProvider(command) // todo: fix model
 
     // Handle the command
-    when(val result = klerk.handle(command, context)) {
+    when (val result = klerk.handle(command, context)) {
         is Failure -> {
             logger.error("Command execution failed: {}", result.problems.joinToString(", "))
             return CallToolResult(
@@ -312,35 +318,31 @@ internal fun modelToJson(model: Model<*>): JsonObject {
     }
 }
 
-private fun propertyToJson(
-    value: Any?,
-) : JsonElement {
-    return when (value) {
-        // Handle DataContainer types which have a 'value' property
-        is DataContainer<*> -> {
-            JsonPrimitive(value.toString())
-        }
-        // Handle ModelID
-        is ModelID<*> -> {
-            JsonPrimitive(value.toString())
-        }
-        // Handle other primitive types
-        is String, is Int, is Boolean, is Long, is Float, is Double -> {
-            JsonPrimitive(value.toString())
-        }
-        is List<*>, is Set<*> -> {
-            buildJsonArray {
-                for (element in (value as Iterable<*>)) {
-                    add(propertyToJson(element))
-                }
+private fun propertyToJson(value: Any?): JsonElement = when (value) {
+    // Handle DataContainer types which have a 'value' property
+    is DataContainer<*> -> {
+        JsonPrimitive(value.toString())
+    }
+    // Handle ModelID
+    is ModelID<*> -> {
+        JsonPrimitive(value.toString())
+    }
+    // Handle other primitive types
+    is String, is Int, is Boolean, is Long, is Float, is Double -> {
+        JsonPrimitive(value.toString())
+    }
+    is List<*>, is Set<*> -> {
+        buildJsonArray {
+            for (element in (value as Iterable<*>)) {
+                add(propertyToJson(element))
             }
         }
-        null -> {
-            JsonNull
-        }
-        else -> {
-            throw IllegalArgumentException("Unsupported property type: ${value::class}")
-        }
+    }
+    null -> {
+        JsonNull
+    }
+    else -> {
+        throw IllegalArgumentException("Unsupported property type: ${value::class}")
     }
 }
 

@@ -8,12 +8,12 @@ dependencyResolutionManagement {
     repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
     repositories {
         mavenLocal()
-        mavenCentral() {
+        mavenCentral {
             content {
                 excludeGroup("dev.klerkframework")
             }
         }
-        maven ("https://jitpack.io") {
+        maven("https://jitpack.io") {
             content {
                 includeGroup("dev.klerkframework")
             }
